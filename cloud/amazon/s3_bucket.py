@@ -38,6 +38,11 @@ options:
       - The JSON policy as a string.
     required: false
     default: null
+  cors_xml:
+    description:
+      - A CORS XML configuration as a string.  See http://docs.aws.amazon.com/AmazonS3/latest/dev/cors.html for details on the format
+    required: false
+    default: null
   s3_url:
     description:
       - S3 URL endpoint for usage with Eucalypus, fakes3, etc.  Otherwise assumes AWS
@@ -93,16 +98,35 @@ EXAMPLES = '''
     tags:
       example: tag1
       another: tag2
-    
+
+# Create a bucket, add a CORS xml policy
+- s3_bucket:
+    name: mys3bucket
+    cors_xml: >
+      <CORSConfiguration>
+        <CORSRule>
+          <AllowedOrigin>https://mysite.com</AllowedOrigin>
+          <AllowedMethod>DELETE</AllowedMethod>
+          <AllowedMethod>POST</AllowedMethod>
+          <AllowedMethod>PUT</AllowedMethod>
+          <AllowedHeader>*</AllowedHeader>
+        </CORSRule>
+      </CORSConfiguration>
+    tags:
+      example: tag1
+      another: tag2
+
 '''
 
 import xml.etree.ElementTree as ET
+import xml.sax
 
 try:
     import boto.ec2
     from boto.s3.connection import OrdinaryCallingFormat, Location
     from boto.s3.tagging import Tags, TagSet
     from boto.exception import BotoServerError, S3CreateError, S3ResponseError
+    from boto.s3.cors import CORSConfiguration
     HAS_BOTO = True
 except ImportError:
     HAS_BOTO = False
@@ -228,6 +252,43 @@ def create_bucket(connection, module):
     ## Fix up json of policy so it's not escaped
     ####
     
+    # CORS xml
+    try:
+        current_cors_config = bucket.get_cors()
+        current_cors_xml = current_cors_config.to_xml()
+    except S3ResponseError, e:
+        if e.error_code == "NoSuchCORSConfiguration":
+            current_cors_xml = None
+        else:
+            module.fail_json(msg=e.message)
+
+    if cors_xml is not None:
+        cors_rule_change = False
+        if current_cors_xml is None:
+            cors_rule_change = True  # Create
+        else:
+            # Convert cors_xml to a Boto CorsConfiguration object for comparison
+            cors_config = CORSConfiguration()
+            h = handler.XmlHandler(cors_config, bucket)
+            xml.sax.parseString(cors_xml, h)
+            if cors_config.to_xml() != current_cors_config.to_xml():
+                cors_rule_change = True  # Update
+
+        if cors_rule_change:
+            try:
+                bucket.set_cors_xml(cors_xml)
+                changed = True
+                current_cors_xml = bucket.get_cors().to_xml()
+            except S3ResponseError, e:
+                module.fail_json(msg=e.message)
+    elif current_cors_xml is not None:
+        try:
+            bucket.delete_cors()
+            changed = True
+            current_cors_xml = None
+        except S3ResponseError, e:
+            module.fail_json(msg=e.message)
+
     # Tags
     try:
         current_tags = bucket.get_tags()
@@ -319,7 +380,8 @@ def main():
             s3_url = dict(aliases=['S3_URL']),
             state = dict(default='present', choices=['present', 'absent']),
             tags = dict(required=None, default={}, type='dict'),
-            versioning = dict(default='no', type='bool')
+            versioning = dict(default='no', type='bool'),
+            cors_xml = dict(required=False, default=None),
         )
     )
     
