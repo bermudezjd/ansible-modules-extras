@@ -15,7 +15,6 @@
 # You should have received a copy of the GNU General Public License
 # along with this software.  If not, see <http://www.gnu.org/licenses/>.
 
-import json
 import os
 import pipes
 import stat
@@ -45,9 +44,9 @@ options:
     default: None
   show_diff:
     description:
-      - Should puppet return diffs of changes applied. Defaults to yes, to match puppet agent --test. Change to no to avoid leaking secret changes.
+      - Should puppet return diffs of changes applied. Defaults to off to avoid leaking secret changes by default.
     required: false
-    default: yes
+    default: no
     choices: [ "yes", "no" ]
   facts:
     description:
@@ -109,7 +108,7 @@ def main():
             puppetmaster=dict(required=False, default=None),
             manifest=dict(required=False, default=None),
             show_diff=dict(
-                default=True, aliases=['show-diff'], type='bool'),
+                default=False, aliases=['show-diff'], type='bool'),
             facts=dict(default=None),
             facter_basename=dict(default='ansible'),
             environment=dict(required=False, default=None),
@@ -197,7 +196,7 @@ def main():
             error=True, stdout=stdout, stderr=stderr)
     elif rc == 2:
         # success with changes
-        module.exit_json(rc=0, changed=True)
+        module.exit_json(rc=0, changed=True, stdout=stdout, stderr=stderr)
     elif rc == 124:
         # timeout
         module.exit_json(

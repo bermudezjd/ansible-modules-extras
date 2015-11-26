@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-
+#
 # (c) 2015, Linus Unnebäck <linus@folkdatorn.se>
 #
 # This file is part of Ansible
@@ -199,6 +199,19 @@ options:
         rule also specifies one of the following protocols: tcp, udp, dccp or
         sctp."
     required: false
+  comment:
+    description:
+      - "This specifies a comment that will be added to the rule"
+    required: false
+  ctstate:
+    description:
+      - "ctstate is a list of the connection states to match in the conntrack module.
+        Possible states are: 'INVALID', 'NEW', 'ESTABLISHED', 'RELATED', 'UNTRACKED', 'SNAT', 'DNAT'"
+    required: false
+  limit:
+    description:
+      - "Specifies the maximum average number of matches to allow per second. The number can specify units explicitly, using `/second', `/minute', `/hour' or `/day', or parts of them (so `5/second' is the same as `5/s')."
+    required: false
 '''
 
 EXAMPLES = '''
@@ -207,7 +220,11 @@ EXAMPLES = '''
   become: yes
 
 # Forward port 80 to 8600
-- iptables: table=nat chain=PREROUTING in_interface=eth0 protocol=tcp match=tcp destination_port=80 jump=REDIRECT to_ports=8600
+- iptables: table=nat chain=PREROUTING in_interface=eth0 protocol=tcp match=tcp destination_port=80 jump=REDIRECT to_ports=8600 comment="Redirect web traffic to port 8600"
+  become: yes
+
+# Allow related and established connections
+- iptables: chain=INPUT ctstate=ESTABLISHED,RELATED jump=ACCEPT
   become: yes
 '''
 
@@ -219,6 +236,22 @@ def append_param(rule, param, flag, is_list):
     else:
         if param is not None:
             rule.extend([flag, param])
+
+def append_comm(rule, param):
+    if param:
+        rule.extend(['-m'])
+        rule.extend(['comment'])
+
+
+def append_conntrack(rule, param):
+    if param:
+        rule.extend(['-m'])
+        rule.extend(['state'])
+
+def append_limit(rule, param):
+    if param:
+        rule.extend(['-m'])
+        rule.extend(['limit'])
 
 
 def construct_rule(params):
@@ -236,6 +269,13 @@ def construct_rule(params):
     append_param(rule, params['source_port'], '--source-port', False)
     append_param(rule, params['destination_port'], '--destination-port', False)
     append_param(rule, params['to_ports'], '--to-ports', False)
+    append_comm(rule, params['comment'])
+    append_param(rule, params['comment'], '--comment', False)
+    if params['ctstate']:
+        append_conntrack(rule, params['ctstate'])
+        append_param(rule, ','.join(params['ctstate']), '--state', False)
+    append_limit(rule, params['limit'])
+    append_param(rule, params['limit'], '--limit', False)
     return rule
 
 
@@ -284,6 +324,9 @@ def main():
             source_port=dict(required=False, default=None, type='str'),
             destination_port=dict(required=False, default=None, type='str'),
             to_ports=dict(required=False, default=None, type='str'),
+            comment=dict(required=False, default=None, type='str'),
+            ctstate=dict(required=False, default=[], type='list'),
+            limit=dict(required=False, default=None, type='str'),
         ),
     )
     args = dict(
