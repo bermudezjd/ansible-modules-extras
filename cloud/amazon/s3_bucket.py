@@ -99,23 +99,14 @@ EXAMPLES = '''
       example: tag1
       another: tag2
 
-# Create a bucket, add a CORS xml policy
+# Create a bucket, add a CORS XML policy
 - s3_bucket:
     name: mys3bucket
-    cors_xml: >
-      <CORSConfiguration>
-        <CORSRule>
-          <AllowedOrigin>https://mysite.com</AllowedOrigin>
-          <AllowedMethod>DELETE</AllowedMethod>
-          <AllowedMethod>POST</AllowedMethod>
-          <AllowedMethod>PUT</AllowedMethod>
-          <AllowedHeader>*</AllowedHeader>
-        </CORSRule>
-      </CORSConfiguration>
+    cors_xml: "{{ lookup('file', 'cors_policy.xml') }}"
+    versioning: yes
     tags:
       example: tag1
       another: tag2
-
 '''
 
 import xml.etree.ElementTree as ET
@@ -126,6 +117,7 @@ try:
     from boto.s3.connection import OrdinaryCallingFormat, Location
     from boto.s3.tagging import Tags, TagSet
     from boto.exception import BotoServerError, S3CreateError, S3ResponseError
+    from boto.handler import XmlHandler
     from boto.s3.cors import CORSConfiguration
     HAS_BOTO = True
 except ImportError:
@@ -160,6 +152,7 @@ def create_bucket(connection, module, location):
     requester_pays = module.params.get("requester_pays")
     tags = module.params.get("tags")
     versioning = module.params.get("versioning")
+    cors_xml = module.params.get("cors_xml")
     changed = False
     
     try:
@@ -268,7 +261,7 @@ def create_bucket(connection, module, location):
         else:
             # Convert cors_xml to a Boto CorsConfiguration object for comparison
             cors_config = CORSConfiguration()
-            h = handler.XmlHandler(cors_config, bucket)
+            h = XmlHandler(cors_config, bucket)
             xml.sax.parseString(cors_xml, h)
             if cors_config.to_xml() != current_cors_config.to_xml():
                 cors_rule_change = True  # Update
