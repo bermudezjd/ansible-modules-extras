@@ -49,6 +49,7 @@ options:
         - Domain id to create the project in if the cloud supports domains
      required: false
      default: None
+     aliases: ['domain']
    enabled:
      description:
         - Is the project enabled
@@ -138,7 +139,7 @@ def main():
     argument_spec = openstack_full_argument_spec(
         name=dict(required=True),
         description=dict(required=False, default=None),
-        domain=dict(required=False, default=None),
+        domain_id=dict(required=False, default=None, aliases=['domain']),
         enabled=dict(default=True, type='bool'),
         state=dict(default='present', choices=['absent', 'present'])
     )
@@ -155,11 +156,27 @@ def main():
 
     name = module.params['name']
     description = module.params['description']
-    domain = module.params['domain']
+    domain = module.params.pop('domain_id')
     enabled = module.params['enabled']
     state = module.params['state']
 
     try:
+        if domain:
+            opcloud = shade.operator_cloud(**module.params)
+            try:
+                # We assume admin is passing domain id
+                dom = opcloud.get_domain(domain)['id']
+                domain = dom
+            except:
+                # If we fail, maybe admin is passing a domain name.
+                # Note that domains have unique names, just like id.
+                try:
+                    dom = opcloud.search_domains(filters={'name': domain})[0]['id']
+                    domain = dom
+                except:
+                    # Ok, let's hope the user is non-admin and passing a sane id
+                    pass
+        
         cloud = shade.openstack_cloud(**module.params)
         project = cloud.get_project(name)
 

@@ -111,6 +111,7 @@ EXAMPLES = '''
 
 import xml.etree.ElementTree as ET
 import xml.sax
+import urlparse
 
 try:
     import boto.ec2

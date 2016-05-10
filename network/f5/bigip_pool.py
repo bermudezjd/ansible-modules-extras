@@ -57,7 +57,8 @@ options:
     validate_certs:
         description:
             - If C(no), SSL certificates will not be validated. This should only be used
-              on personally controlled sites using self-signed certificates.
+              on personally controlled sites.  Prior to 2.0, this module would always
+              validate on python >= 2.7.9 and never validate on python <= 2.7.8
         required: false
         default: 'yes'
         choices: ['yes', 'no']
@@ -128,6 +129,14 @@ options:
         description:
             - Sets the ramp-up time (in seconds) to gradually ramp up the load on newly added or freshly detected up pool members
         version_added: "1.3"
+        required: False
+        default: null
+        choices: []
+        aliases: []
+    reselect_tries:
+        description:
+            - Sets the number of times the system tries to contact a pool member after a passive failure
+        version_added: "2.2"
         required: False
         default: null
         choices: []
@@ -283,6 +292,13 @@ def get_slow_ramp_time(api, pool):
 def set_slow_ramp_time(api, pool, seconds):
     api.LocalLB.Pool.set_slow_ramp_time(pool_names=[pool], values=[seconds])
 
+def get_reselect_tries(api, pool):
+    result = api.LocalLB.Pool.get_reselect_tries(pool_names=[pool])[0]
+    return result
+
+def set_reselect_tries(api, pool, tries):
+    api.LocalLB.Pool.set_reselect_tries(pool_names=[pool], values=[tries])
+
 def get_action_on_service_down(api, pool):
     result = api.LocalLB.Pool.get_action_on_service_down(pool_names=[pool])[0]
     result = result.split("SERVICE_DOWN_ACTION_")[-1].lower()
@@ -355,6 +371,7 @@ def main():
             quorum = dict(type='int'),
             monitors = dict(type='list'),
             slow_ramp_time = dict(type='int'),
+            reselect_tries = dict(type='int'),
             service_down_action = dict(type='str', choices=service_down_choices),
             host = dict(type='str', aliases=['address']),
             port = dict(type='int')
@@ -366,7 +383,20 @@ def main():
         supports_check_mode=True
     )
 
-    (server,user,password,state,partition,validate_certs) = f5_parse_arguments(module)
+    if not bigsuds_found:
+        module.fail_json(msg="the python bigsuds module is required")
+
+    if module.params['validate_certs']:
+        import ssl
+        if not hasattr(ssl, 'SSLContext'):
+            module.fail_json(msg='bigsuds does not support verifying certificates with python < 2.7.9.  Either update python or set validate_certs=False on the task')
+
+    server = module.params['server']
+    user = module.params['user']
+    password = module.params['password']
+    state = module.params['state']
+    partition = module.params['partition']
+    validate_certs = module.params['validate_certs']
 
     name = module.params['name']
     pool = fq_name(partition,name)
@@ -383,6 +413,7 @@ def main():
         for monitor in module.params['monitors']:
                 monitors.append(fq_name(partition, monitor))
     slow_ramp_time = module.params['slow_ramp_time']
+    reselect_tries = module.params['reselect_tries']
     service_down_action = module.params['service_down_action']
     if service_down_action:
         service_down_action = service_down_action.lower()
@@ -390,16 +421,13 @@ def main():
     address = fq_name(partition,host)
     port = module.params['port']
 
-    if not validate_certs:
-        disable_ssl_cert_validation()
-
     # sanity check user supplied values
 
-    if (host and not port) or (port and not host):
+    if (host and port is None) or (port is not None and not host):
         module.fail_json(msg="both host and port must be supplied")
 
-    if 1 > port > 65535:
-        module.fail_json(msg="valid ports must be in range 1 - 65535")
+    if port is not None and (0 > port or port > 65535):
+        module.fail_json(msg="valid ports must be in range 0 - 65535")
 
     if monitors:
         if len(monitors) == 1:
@@ -421,7 +449,7 @@ def main():
         module.fail_json(msg="quorum requires monitors parameter")
 
     try:
-        api = bigip_api(server, user, password)
+        api = bigip_api(server, user, password, validate_certs)
         result = {'changed': False}  # default
 
         if state == 'absent':
@@ -476,6 +504,8 @@ def main():
                             set_monitors(api, pool, monitor_type, quorum, monitors)
                         if slow_ramp_time:
                             set_slow_ramp_time(api, pool, slow_ramp_time)
+                        if reselect_tries:
+                            set_reselect_tries(api, pool, reselect_tries)
                         if service_down_action:
                             set_action_on_service_down(api, pool, service_down_action)
                         if host and port:
@@ -502,11 +532,19 @@ def main():
                     if not module.check_mode:
                         set_slow_ramp_time(api, pool, slow_ramp_time)
                     result = {'changed': True}
+                if reselect_tries and reselect_tries != get_reselect_tries(api, pool):
+                    if not module.check_mode:
+                        set_reselect_tries(api, pool, reselect_tries)
+                    result = {'changed': True}
                 if service_down_action and service_down_action != get_action_on_service_down(api, pool):
                     if not module.check_mode:
                         set_action_on_service_down(api, pool, service_down_action)
                     result = {'changed': True}
                 if (host and port) and not member_exists(api, pool, address, port):
+                    if not module.check_mode:
+                        add_pool_member(api, pool, address, port)
+                    result = {'changed': True}
+                if (host and port == 0) and not member_exists(api, pool, address, port):
                     if not module.check_mode:
                         add_pool_member(api, pool, address, port)
                     result = {'changed': True}
@@ -519,5 +557,6 @@ def main():
 # import module snippets
 from ansible.module_utils.basic import *
 from ansible.module_utils.f5 import *
-main()
 
+if __name__ == '__main__':
+    main()
