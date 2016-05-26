@@ -244,7 +244,7 @@ def main():
     marker1 = re.sub(r'{mark}', 'END', marker)
     if present and block:
         # Escape seqeuences like '\n' need to be handled in Ansible 1.x
-        if module.constants['ANSIBLE_VERSION'].startswith('1.'):
+        if module.ansible_version.startswith('1.'):
             block = re.sub('', block, '')
         blocklines = [marker0] + block.splitlines() + [marker1]
     else:
@@ -280,7 +280,9 @@ def main():
     lines[n0:n0] = blocklines
 
     if lines:
-        result = '\n'.join(lines)+'\n'
+        result = '\n'.join(lines)
+        if original and original.endswith('\n'):
+            result += '\n'
     else:
         result = ''
     if original == result:
